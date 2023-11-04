@@ -98,7 +98,7 @@ class AsdlInterface(CurvatureInterface):
                     kfacs.append([stats.kron.B, stats.kron.A])
             else:
                 raise ValueError(f'Whats happening with {module}?')
-        return Kron(kfacs)
+        return Kron(kfacs, Kron.get_param_names(curv._model))
 
     @staticmethod
     def _rescale_kron_factors(kron, N):

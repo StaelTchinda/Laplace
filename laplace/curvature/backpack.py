@@ -110,10 +110,11 @@ class BackPackGGN(BackPackInterface, GGNInterface):
             return torch.cat([p.diag_ggn_exact.data.flatten() for p in self._model.parameters()])
 
     def _get_kron_factors(self):
+        # TODO: test this
         if self.stochastic:
-            return Kron([p.kfac for p in self._model.parameters()])
+            return Kron([p.kfac for p in self._model.parameters()], Kron.get_param_names(self._model))
         else:
-            return Kron([p.kflr for p in self._model.parameters()])
+            return Kron([p.kflr for p in self._model.parameters()], Kron.get_param_names(self._model))
 
     @staticmethod
     def _rescale_kron_factors(kron, M, N):

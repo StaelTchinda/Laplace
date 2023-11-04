@@ -1,10 +1,11 @@
 from math import pow
 import torch
 import numpy as np
+import warnings
 from typing import Union
 import opt_einsum as oe 
 
-from laplace.utils import _is_valid_scalar, symeig, kron, block_diag
+from laplace.utils import _is_valid_scalar, symeig, kron, block_diag, _is_batchnorm
 
 
 __all__ = ['Kron', 'KronDecomposed']
@@ -23,8 +24,33 @@ class Kron:
         each element in the list is a Tuple of two Kronecker factors Q, H
         or a single matrix approximating the Hessian (in case of bias, for example)
     """
-    def __init__(self, kfacs):
+    def __init__(self, kfacs, param_names=None):
+        self._check_param_names(kfacs, param_names)
         self.kfacs = kfacs
+        self.param_names = param_names
+
+    @classmethod
+    def _check_param_names(cls, kfacs, param_names):
+        if param_names is None:
+            return
+        if len(param_names) != len(kfacs):
+            raise ValueError(f'Number of parameter names {len(param_names)} does not match number of factors {len(kfacs)}.')
+        for i, (name, F) in enumerate(zip(param_names, kfacs)):
+            if name is None:
+                raise ValueError(f'Parameter name not provided for {i}th Kronecker factor of shape {F.shape}.')
+
+    @classmethod
+    def get_param_names(cls, model):
+        param_names = list()
+        for (name, p) in model.named_parameters():
+            if p.ndim == 1:  # bias
+                param_names.append(name)
+            elif 4 >= p.ndim >= 2:  # fully connected or conv
+                param_names.append(name)
+            else:
+                raise ValueError('Invalid parameter shape in network.')
+
+        return param_names
 
     @classmethod
     def init_from_model(cls, model, device):
@@ -40,10 +66,12 @@ class Kron:
         kron : Kron
         """
         kfacs = list()
-        for p in model.parameters():
+        param_names = list()
+        for (name, p) in model.named_parameters():
             if p.ndim == 1:  # bias
                 P = p.size(0)
                 kfacs.append([torch.zeros(P, P, device=device)])
+                param_names.append(name)
             elif 4 >= p.ndim >= 2:  # fully connected or conv
                 if p.ndim == 2:  # fully connected
                     P_in, P_out = p.size()
@@ -54,9 +82,10 @@ class Kron:
                     torch.zeros(P_in, P_in, device=device),
                     torch.zeros(P_out, P_out, device=device)
                 ])
+                param_names.append(name)
             else:
                 raise ValueError('Invalid parameter shape in network.')
-        return cls(kfacs)
+        return cls(kfacs, param_names)
 
     def __add__(self, other):
         """Add up Kronecker factors `self` and `other`.
@@ -71,10 +100,21 @@ class Kron:
         """
         if not isinstance(other, Kron):
             raise ValueError('Can only add Kron to Kron.')
+        if self.param_names != other.param_names:
+            raise ValueError(f'Cannot add Kron with different param names: {self.param_names} vs {other.param_names}.')
 
-        kfacs = [[Hi.add(Hj) for Hi, Hj in zip(Fi, Fj)]
-                 for Fi, Fj in zip(self.kfacs, other.kfacs)]
-        return Kron(kfacs)
+        kfacs = list()
+        for kfac_idx, (Fi, Fj) in enumerate(zip(self.kfacs, other.kfacs)):
+            kfac = list()
+            for block_idx, (Hi, Hj) in enumerate(zip(Fi, Fj)):
+                try:
+                    kfac.append(Hi.add(Hj))
+                except Exception as e:
+                    optional_param_name = f'at parameter {self.param_names[kfac_idx]}' if self.param_names is not None else ''
+                    raise RuntimeError(f"Error adding the {block_idx}th block {optional_param_name} with shapes {Hi.shape} and {Hj.shape}.", e) from e
+
+            kfacs.append(kfac)
+        return Kron(kfacs, self.param_names)
 
     def __mul__(self, scalar: Union[float, torch.Tensor]):
         """Multiply all Kronecker factors by scalar.
@@ -94,7 +134,7 @@ class Kron:
 
         # distribute factors evenly so that each group is multiplied by factor
         kfacs = [[pow(scalar, 1/len(F)) * Hi for Hi in F] for F in self.kfacs]
-        return Kron(kfacs)
+        return Kron(kfacs, self.param_names)
 
     def __len__(self):
         return len(self.kfacs)
@@ -266,7 +306,7 @@ class KronDecomposed:
         use dampen approximation mixing prior and Kron partially multiplicatively
     """
 
-    def __init__(self, eigenvectors, eigenvalues, deltas=None, damping=False):
+    def __init__(self, eigenvectors, eigenvalues, deltas=None, damping=False, param_names=None):
         self.eigenvectors = eigenvectors
         self.eigenvalues = eigenvalues
         device = eigenvectors[0][0].device
@@ -276,6 +316,21 @@ class KronDecomposed:
             self._check_deltas(deltas)
             self.deltas = deltas
         self.damping = damping
+        self._check_param_names(param_names)
+        self.param_names = param_names
+
+    def _check_param_names(self, param_names):
+        if param_names is None:
+            return
+        if len(param_names) != len(self.eigenvectors):
+            raise ValueError(f'Number of parameter names {len(param_names)} does not match number of eigenvectors {len(self.eigenvectors)}.')
+        elif len(param_names) != len(self.eigenvalues):
+            raise ValueError(f'Number of parameter names {len(param_names)} does not match number of eigenvalues {len(self.eigenvalues)}.')
+        elif self.deltas is not None and len(param_names) != len(self.deltas):
+            raise ValueError(f'Number of parameter names {len(param_names)} does not match number of deltas {len(self.deltas)}.')
+        for i, (name, _) in enumerate(zip(param_names, self.eigenvectors)):
+            if name is None:
+                raise ValueError(f'Parameter name not provided for {i}th eigen element.')
 
     def detach(self):
         self.deltas = self.deltas.detach()
@@ -305,7 +360,7 @@ class KronDecomposed:
         kron : KronDecomposed
         """
         self._check_deltas(deltas)
-        return KronDecomposed(self.eigenvectors, self.eigenvalues, self.deltas + deltas)
+        return KronDecomposed(self.eigenvectors, self.eigenvalues, self.deltas + deltas, self.param_names)
 
     def __mul__(self, scalar):
         """Multiply by a scalar by changing the eigenvalues.
@@ -323,7 +378,7 @@ class KronDecomposed:
             raise ValueError('Invalid argument, can only multiply Kron with scalar.')
 
         eigenvalues = [[pow(scalar, 1/len(ls)) * l for l in ls] for ls in self.eigenvalues]
-        return KronDecomposed(self.eigenvectors, eigenvalues, self.deltas)
+        return KronDecomposed(self.eigenvectors, eigenvalues, self.deltas, self.param_names)
 
     def __len__(self) -> int:
         return len(self.eigenvalues)
