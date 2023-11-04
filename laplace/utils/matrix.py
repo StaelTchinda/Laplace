@@ -40,26 +40,34 @@ class Kron:
                 raise ValueError(f'Parameter name not provided for {i}th Kronecker factor of shape {F.shape}.')
 
     @classmethod
-    def get_param_names(cls, model):
+    def get_param_names(cls, model, ignore_batchnorm=False):
         param_names = list()
-        for (name, p) in model.named_parameters():
+        for (param_name, p) in model.named_parameters():
+            if ignore_batchnorm:
+                module_name = '.'.join(param_name.split('.')[:-1])
+                module = dict(model.named_modules())[module_name]
+                if _is_batchnorm(module):
+                    warnings.warn('BatchNorm unsupported for Kron, ignore.')
+                    continue
+
             if p.ndim == 1:  # bias
-                param_names.append(name)
+                param_names.append(param_name)
             elif 4 >= p.ndim >= 2:  # fully connected or conv
-                param_names.append(name)
+                param_names.append(param_name)
             else:
                 raise ValueError('Invalid parameter shape in network.')
 
         return param_names
 
     @classmethod
-    def init_from_model(cls, model, device):
+    def init_from_model(cls, model, device, ignore_batchnorm=False):
         """Initialize Kronecker factors based on a models architecture.
 
         Parameters
         ----------
         model : torch.nn.Module
         device : torch.device
+        ignore_batchnorm: bool
 
         Returns
         -------
@@ -67,11 +75,18 @@ class Kron:
         """
         kfacs = list()
         param_names = list()
-        for (name, p) in model.named_parameters():
+        for (param_name, p) in model.named_parameters():
+            if ignore_batchnorm:
+                module_name = '.'.join(param_name.split('.')[:-1])
+                module = dict(model.named_modules())[module_name]
+                if _is_batchnorm(module):
+                    warnings.warn('BatchNorm unsupported for Kron, ignore.')
+                    continue
+
             if p.ndim == 1:  # bias
                 P = p.size(0)
                 kfacs.append([torch.zeros(P, P, device=device)])
-                param_names.append(name)
+                param_names.append(param_name)
             elif 4 >= p.ndim >= 2:  # fully connected or conv
                 if p.ndim == 2:  # fully connected
                     P_in, P_out = p.size()
@@ -82,7 +97,7 @@ class Kron:
                     torch.zeros(P_in, P_in, device=device),
                     torch.zeros(P_out, P_out, device=device)
                 ])
-                param_names.append(name)
+                param_names.append(param_name)
             else:
                 raise ValueError('Invalid parameter shape in network.')
         return cls(kfacs, param_names)
