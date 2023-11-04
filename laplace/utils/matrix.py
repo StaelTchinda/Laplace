@@ -1,4 +1,6 @@
 from math import pow
+import warnings
+
 import torch
 import numpy as np
 import warnings
@@ -76,12 +78,12 @@ class Kron:
         kfacs = list()
         param_names = list()
         for (param_name, p) in model.named_parameters():
-            if ignore_batchnorm:
-                module_name = '.'.join(param_name.split('.')[:-1])
-                module = dict(model.named_modules())[module_name]
-                if _is_batchnorm(module):
-                    warnings.warn('BatchNorm unsupported for Kron, ignore.')
-                    continue
+            module_name = '.'.join(param_name.split('.')[:-1])
+            module = dict(model.named_modules())[module_name]
+            if _is_batchnorm(module):
+                if ignore_batchnorm:
+                    warnings.warn(f'BatchNorm unsupported for Kron, ignore param {param_name}.')
+                    continue                  
 
             if p.ndim == 1:  # bias
                 P = p.size(0)

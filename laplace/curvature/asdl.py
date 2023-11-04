@@ -17,6 +17,9 @@ EPS = 1e-6
 class AsdlInterface(CurvatureInterface):
     """Interface for asdfghjkl backend.
     """
+    def __init__(self, model, likelihood, last_layer=False, subnetwork_indices=None, ignore_batchnorm=True):
+        super().__init__(model, likelihood, last_layer, subnetwork_indices)
+        self.ignore_batchnorm = ignore_batchnorm
 
     def jacobians(self, x, enable_backprop=False):
         """Compute Jacobians \\(\\nabla_\\theta f(x;\\theta)\\) at current parameter \\(\\theta\\)
@@ -78,11 +81,27 @@ class AsdlInterface(CurvatureInterface):
 
     def _get_kron_factors(self, curv, M):
         kfacs = list()
-        for module in curv._model.modules():
+        for (name, module) in curv._model.named_modules():
             if _is_batchnorm(module):
-                warnings.warn('BatchNorm unsupported for Kron, ignore.')
-                continue
-
+                if self.ignore_batchnorm:
+                    warnings.warn('BatchNorm unsupported for Kron, ignore.')
+                    continue
+                else:
+                    warnings.warn('BatchNorm unsupported for Kron, will set the kron to 0.')
+                    device = next(curv._model.parameters()).device
+                    if hasattr(module, 'bias') and module.bias is not None:
+                        p = module.bias
+                        P = p.size(0)
+                        kfacs.append([torch.zeros(P, P, device=device)])
+                    if hasattr(module, 'weight') and module.weight is not None:
+                        p = module.weight
+                        if p.ndim == 1:
+                            P = p.size(0)
+                            kfacs.append([torch.zeros(P, P, device=device)])
+                        else:
+                            raise ValueError(f'Invalid parameter shape {p.ndim}  of module {name} in network.')
+                    continue
+            
             stats = getattr(module, self._ggn_type, None)
             if stats is None:
                 continue
@@ -98,7 +117,8 @@ class AsdlInterface(CurvatureInterface):
                     kfacs.append([stats.kron.B, stats.kron.A])
             else:
                 raise ValueError(f'Whats happening with {module}?')
-        return Kron(kfacs, Kron.get_param_names(curv._model, ignore_batchnorm=True))
+
+        return Kron(kfacs, Kron.get_param_names(curv._model, ignore_batchnorm=self.ignore_batchnorm))
 
     @staticmethod
     def _rescale_kron_factors(kron, N):
@@ -138,8 +158,8 @@ class AsdlInterface(CurvatureInterface):
 
 class AsdlHessian(AsdlInterface):
 
-    def __init__(self, model, likelihood, last_layer=False, low_rank=10):
-        super().__init__(model, likelihood, last_layer)
+    def __init__(self, model, likelihood, last_layer=False, ignore_batchnorm=True, low_rank=10):
+        super().__init__(model, likelihood, last_layer, ignore_batchnorm=ignore_batchnorm)
         self.low_rank = low_rank
 
     @property
@@ -169,10 +189,10 @@ class AsdlHessian(AsdlInterface):
 class AsdlGGN(AsdlInterface, GGNInterface):
     """Implementation of the `GGNInterface` using asdfghjkl.
     """
-    def __init__(self, model, likelihood, last_layer=False, subnetwork_indices=None, stochastic=False):
+    def __init__(self, model, likelihood, last_layer=False, subnetwork_indices=None, ignore_batchnorm=True, stochastic=False):
         if likelihood != 'classification':
             raise ValueError('This backend only supports classification currently.')
-        super().__init__(model, likelihood, last_layer, subnetwork_indices)
+        super().__init__(model, likelihood, last_layer, subnetwork_indices, ignore_batchnorm=ignore_batchnorm)
         self.stochastic = stochastic
 
     @property
@@ -183,10 +203,10 @@ class AsdlGGN(AsdlInterface, GGNInterface):
 class AsdlEF(AsdlInterface, EFInterface):
     """Implementation of the `EFInterface` using asdfghjkl.
     """
-    def __init__(self, model, likelihood, last_layer=False):
+    def __init__(self, model, likelihood, last_layer=False, ignore_batchnorm=True):
         if likelihood != 'classification':
             raise ValueError('This backend only supports classification currently.')
-        super().__init__(model, likelihood, last_layer)
+        super().__init__(model, likelihood, last_layer, ignore_batchnorm=ignore_batchnorm)
 
     @property
     def _ggn_type(self):

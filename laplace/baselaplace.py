@@ -876,12 +876,12 @@ class KronLaplace(ParametricLaplace):
 
     def __init__(self, model, likelihood, sigma_noise=1., prior_precision=1.,
                  prior_mean=0., temperature=1., enable_backprop=False, backend=None, 
-                 damping=False, ignore_batchnorm=False, **backend_kwargs):
+                 damping=False, ignore_batchnorm=False, backend_kwargs=None):
         self.damping = damping
         self.H_facs = None
         self.ignore_batchnorm = ignore_batchnorm
         super().__init__(model, likelihood, sigma_noise, prior_precision,
-                         prior_mean, temperature, enable_backprop, backend, **backend_kwargs)
+                         prior_mean, temperature, enable_backprop, backend, backend_kwargs=backend_kwargs)
 
     def _init_H(self):
         self.H = Kron.init_from_model(self.model, self._device, ignore_batchnorm=self.ignore_batchnorm)
