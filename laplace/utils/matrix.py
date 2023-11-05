@@ -176,7 +176,7 @@ class Kron:
                 ls.append(l)
             eigvecs.append(Qs)
             eigvals.append(ls)
-        return KronDecomposed(eigvecs, eigvals, damping=damping)
+        return KronDecomposed(eigvecs, eigvals, damping=damping, param_names=self.param_names)
 
     def _bmm(self, W: torch.Tensor) -> torch.Tensor:
         """Implementation of `bmm` which casts the parameters to the right shape.
@@ -377,7 +377,7 @@ class KronDecomposed:
         kron : KronDecomposed
         """
         self._check_deltas(deltas)
-        return KronDecomposed(self.eigenvectors, self.eigenvalues, self.deltas + deltas, self.param_names)
+        return KronDecomposed(self.eigenvectors, self.eigenvalues, self.deltas + deltas, param_names=self.param_names)
 
     def __mul__(self, scalar):
         """Multiply by a scalar by changing the eigenvalues.
@@ -395,7 +395,7 @@ class KronDecomposed:
             raise ValueError('Invalid argument, can only multiply Kron with scalar.')
 
         eigenvalues = [[pow(scalar, 1/len(ls)) * l for l in ls] for ls in self.eigenvalues]
-        return KronDecomposed(self.eigenvectors, eigenvalues, self.deltas, self.param_names)
+        return KronDecomposed(self.eigenvectors, eigenvalues, self.deltas, param_names=self.param_names)
 
     def __len__(self) -> int:
         return len(self.eigenvalues)
