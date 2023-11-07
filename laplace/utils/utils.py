@@ -164,6 +164,7 @@ def symeig(M):
             stats = f'diag: {M.diagonal()}, max: {M.abs().max()}, '
             stats = stats + f'min: {M.abs().min()}, mean: {M.abs().mean()}'
             logging.info(f'SYMEIG: adding jitter failed. Stats: {stats}')
+            # Program should not be completely stop if an error occured.
             raise RuntimeError(f"SYMEIG: adding jitter failed. Stats: {stats}", e)
             # exit()
     # eigenvalues of symeig at least 0
