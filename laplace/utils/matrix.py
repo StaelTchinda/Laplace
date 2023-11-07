@@ -124,10 +124,15 @@ class Kron:
         for kfac_idx, (Fi, Fj) in enumerate(zip(self.kfacs, other.kfacs)):
             kfac = list()
             for block_idx, (Hi, Hj) in enumerate(zip(Fi, Fj)):
+                optional_param_name = f'at parameter {self.param_names[kfac_idx]}' if self.param_names is not None else ''
                 try:
-                    kfac.append(Hi.add(Hj))
+                    if Hi is None and Hj is None:
+                        kfac.append(None)
+                    elif Hi is not None and Hj is not None:
+                        kfac.append(Hi.add(Hj))
+                    else:
+                        raise ValueError(f'Cannot add None Kron with non-None Kron {optima}.')
                 except Exception as e:
-                    optional_param_name = f'at parameter {self.param_names[kfac_idx]}' if self.param_names is not None else ''
                     raise RuntimeError(f"Error adding the {block_idx}th block {optional_param_name} with shapes {Hi.shape} and {Hj.shape}.", e) from e
 
             kfacs.append(kfac)
@@ -171,7 +176,12 @@ class Kron:
         for F in self.kfacs:
             Qs, ls = list(), list()
             for Hi in F:
-                l, Q = symeig(Hi)
+                if torch.isnan(Hi).any():
+                    # Create nan tensors with the correct shape
+                    n = Hi.size(-1)
+                    l, Q = torch.full((n,), torch.nan, device=Hi.device), torch.full((n, n), torch.nan, device=Hi.device)
+                else:
+                    l, Q = symeig(Hi)
                 Qs.append(Q)
                 ls.append(l)
             eigvecs.append(Qs)
