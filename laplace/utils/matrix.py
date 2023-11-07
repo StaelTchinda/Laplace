@@ -413,9 +413,13 @@ class KronDecomposed:
         logdet = 0
         for ls, delta in zip(self.eigenvalues, self.deltas):
             if len(ls) == 1:  # not KFAC just full
+                if torch.isnan(ls[0]).any():
+                    continue
                 logdet += torch.log(ls[0] + delta).sum()
             elif len(ls) == 2:
                 l1, l2 = ls
+                if torch.isnan(l1).any() or torch.isnan(l2).any():
+                    continue
                 if self.damping:
                     l1d, l2d = l1 + torch.sqrt(delta), l2 + torch.sqrt(delta)
                     logdet += torch.log(torch.outer(l1d, l2d)).sum()
@@ -449,23 +453,27 @@ class KronDecomposed:
         for ls, Qs, delta in zip(self.eigenvalues, self.eigenvectors, self.deltas):
             if len(ls) == 1:
                 Q, l, p = Qs[0], ls[0], len(ls[0])
-                ldelta_exp = torch.pow(l + delta, exponent).reshape(-1, 1)
                 W_p = W[:, cur_p:cur_p+p].T
-                SW.append((Q @ (ldelta_exp * (Q.T @ W_p))).T)
+                if torch.isnan(Q).any() or torch.isnan(l).any():
+                    SW.append(W_p.T)
+                else:
+                    ldelta_exp = torch.pow(l + delta, exponent).reshape(-1, 1)
+                    SW.append((Q @ (ldelta_exp * (Q.T @ W_p))).T)
                 cur_p += p
             elif len(ls) == 2:
                 Q1, Q2 = Qs
                 l1, l2 = ls
-                p = len(l1) * len(l2)
-                if self.damping:
-                    l1d, l2d = l1 + torch.sqrt(delta), l2 + torch.sqrt(delta)
-                    ldelta_exp = torch.pow(torch.outer(l1d, l2d), exponent).unsqueeze(0)
-                else:
-                    ldelta_exp = torch.pow(torch.outer(l1, l2) + delta, exponent).unsqueeze(0)
                 p_in, p_out = len(l1), len(l2)
+                p = p_in * p_out
                 W_p = W[:, cur_p:cur_p+p].reshape(B * K, p_in, p_out)
-                W_p = (Q1.T @ W_p @ Q2) * ldelta_exp
-                W_p = Q1 @ W_p @ Q2.T
+                if not (torch.isnan(Q1).any() or torch.isnan(l1).any() or torch.isnan(Q2).any() or torch.isnan(l2).any()):
+                    if self.damping:
+                        l1d, l2d = l1 + torch.sqrt(delta), l2 + torch.sqrt(delta)
+                        ldelta_exp = torch.pow(torch.outer(l1d, l2d), exponent).unsqueeze(0)
+                    else:
+                        ldelta_exp = torch.pow(torch.outer(l1, l2) + delta, exponent).unsqueeze(0)
+                    W_p = (Q1.T @ W_p @ Q2) * ldelta_exp
+                    W_p = Q1 @ W_p @ Q2.T
                 SW.append(W_p.reshape(B * K, p_in * p_out))
                 cur_p += p
             else:

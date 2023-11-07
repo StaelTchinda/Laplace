@@ -87,17 +87,17 @@ class AsdlInterface(CurvatureInterface):
                     warnings.warn('BatchNorm unsupported for Kron, ignore.')
                     continue
                 else:
-                    warnings.warn('BatchNorm unsupported for Kron, will set the kron to 0.')
+                    warnings.warn('BatchNorm unsupported for Kron, will set the kron to nan.')
                     device = next(curv._model.parameters()).device
                     if hasattr(module, 'bias') and module.bias is not None:
                         p = module.bias
                         P = p.size(0)
-                        kfacs.append([torch.zeros(P, P, device=device)])
+                        kfacs.append([torch.full((P, P), torch.nan, device=device)])
                     if hasattr(module, 'weight') and module.weight is not None:
                         p = module.weight
                         if p.ndim == 1:
                             P = p.size(0)
-                            kfacs.append([torch.zeros(P, P, device=device)])
+                            kfacs.append([torch.full((P, P), torch.nan, device=device)])
                         else:
                             raise ValueError(f'Invalid parameter shape {p.ndim}  of module {name} in network.')
                     continue
