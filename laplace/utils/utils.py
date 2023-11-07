@@ -160,11 +160,12 @@ def symeig(M):
         try:
             L, W = torch.linalg.eigh(M, UPLO='U')
             L -= 1.
-        except RuntimeError:
+        except RuntimeError as e:
             stats = f'diag: {M.diagonal()}, max: {M.abs().max()}, '
             stats = stats + f'min: {M.abs().min()}, mean: {M.abs().mean()}'
             logging.info(f'SYMEIG: adding jitter failed. Stats: {stats}')
-            exit()
+            raise RuntimeError(f"SYMEIG: adding jitter failed. Stats: {stats}", e)
+            # exit()
     # eigenvalues of symeig at least 0
     L = L.clamp(min=0.0)
     L = torch.nan_to_num(L)
